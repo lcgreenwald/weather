@@ -1,0 +1,181 @@
+#+title: Weather commands for conky
+#+options: toc:nil
+
+This is a general-purpose command line tool to create and configure
+weather widgets in [[https://github.com/brndnmtthws/conky][conky]] using data from the [[https://openweathermap.org/][openweathermap]] ([[https://openweathermap.org/api/one-call-api][onecall]])
+API.
+
+Misc fixes and cleanup by Larry Greenwald, WB0SIO.
+
+* Dependencies
+
+~curl~ and ~jq~
+
+* Installation
+
+#+begin_example
+$ git clone https://gitlab.com/WB0SIO/weather.git ~/.conky/weather
+$ cd ~/.conky/weather
+$ sudo make install
+#+end_example
+
+Or set the =DESTDIR= variable to install in a different location, for
+example:
+
+: make DESTDIR=$HOME/bin install
+
+* Configuration
+
+The configuration is made in the =config= file:
+
+#+begin_example
+appid="API_KEY"
+lat="51.5085"
+lon="-0.1257"
+units="metric"
+lang="en"
+cache_dir=~/.conky/.cache
+data_path=~/.conky/.cache/onecall.json
+#+end_example
+
+Once that's done you will need to (1) run =weather -w= to download the
+data and (2) configure the =.conkyrc= file. Then you can start conky
+as usual:
+
+: conky -c ~/.conky/.conkyrc
+
+You may also consider running =weather -w= periodically, for example
+using =crontab=.
+
+* Usage
+
+To show the current temperature:
+
+: $ weather
+: 29°
+
+To show the current weather description:
+
+: $ weather -d
+: Few clouds
+
+To show the current weather information:
+
+#+begin_example
+$ weather -c
+Temp: 29/18°, 31°    Humidity: 58%
+Wind: 2km/h NE       Clouds: 9%
+Rain: 0mm            Chance: 0%
+UV index: 0          UV max: 9
+Sunrise: 05:58       Sunset: 17:47
+#+end_example
+
+To show the 4-hour forecast:
+
+#+begin_example
+$ weather -H 4
+Time    Temp     Pop   UV   Description
+17:00   27/27°   0%    0    Scattered clouds
+18:00   24/24°   0%    0    Broken clouds
+19:00   22/22°   0%    0    Broken clouds
+20:00   20/21°   0%    0    Broken clouds
+#+end_example
+
+To show the 4-hour forecast without the header:
+
+#+begin_example
+$ weather -H 4 | tail -n +2
+17:00   27/27°   0%    0    Scattered clouds   
+18:00   24/24°   0%    0    Broken clouds      
+19:00   22/22°   0%    0    Broken clouds      
+20:00   20/21°   0%    0    Broken clouds
+#+end_example
+
+To show the header of the daily forecast:
+
+: $ weather -D 7 | head -1
+: Date     Temp     Rain   Pop   Description
+
+To show everything except the header:
+
+#+begin_example
+$ weather -D 7 | tail -n +2
+Fri 9    25/16°   0mm    0%    Light rain
+Sat 10   27/14°   0mm    0%    Clear sky
+Sun 11   28/15°   0mm    0%    Clear sky
+Mon 12   29/17°   0mm    0%    Clear sky
+Tue 13   28/17°   0mm    0%    Clear sky
+Wed 14   25/17°   7mm    1%    Light rain
+Thu 15   25/19°   2mm    0%    Light rain
+Fri 16   27/17°   0mm    0%    Broken clouds
+#+end_example
+
+To show a 5-day forecast:
+
+#+begin_example
+$ weather -f 5
+  24°      26°      27°      29°      30°    
+  17°      15°      15°      15°      16° 
+#+end_example
+
+To show the first line only:
+
+: $ weather -f 5 2>/dev/null | head -1
+:  24°      26°      27°      29°      30°    
+
+To show the second line only:
+
+: $ weather -f 5 | tail -1
+:  17°      15°      15°      15°      16° 
+
+To show the name of the days of the week:
+
+: $ weather -W 5
+: Thu      Fri      Sat      Sun      Mon
+
+To change horizontal spacing:
+
+#+begin_example
+$ weather -W 3 4
+Thu Fri Sat
+$ weather -W 3 12
+Sat         Sun         Mon
+#+end_example
+
+To show national weather alerts (if available):
+
+: $ weather -a | fmt -u -w 45
+
+To extract the value of object:
+
+: $ weather -e .current.dew_point
+: 16.95
+
+To extract the chance of rain in the next hour:
+
+: $ weather -e '.hourly[1] | "\(.pop)"'
+: 1
+
+To extract the minimum temperature tomorrow:
+
+: $ weather -e '.daily[1] | "\(.temp.min)"'
+: 14.47
+
+To show the time when the data was last fetched:
+
+: $ weather -t
+: 2021-04-10 06:38
+
+To show the relative time instead:
+
+: $ weather -t rel
+: 4m ago
+
+After each update, icons are moved the =$cache_dir= and numbered
+sequentially, so to add a weather icon for tomorrow, for example, use:
+
+: ${image ~/.conky/.cache/02.png -s 55x55 -n}
+
+* Example
+
+[[file:screenshot.png]]

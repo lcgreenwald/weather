@@ -1,0 +1,252 @@
+#!/bin/bash
+
+# Copyright (C) 2021 Jonathan Gregory <jgrg at autistici dot org>
+# 2021/10/28 - Larry Greenwald, WB0SIO - Misc fixes and cleanup
+# Commentary:
+
+# Show weather information using data from the Open Weather Map
+# onecall API
+
+# Code:
+
+declare cache_dir data_path lat lon exclude units lang appid
+
+config_file=~/.conky/weather/config
+# shellcheck disable=SC1090
+[ -e "$config_file" ] && . "$config_file"
+
+base_url="https://api.openweathermap.org/data/2.5/"
+data_url="${base_url}onecall?lat=${lat}&lon=${lon}&exclude=${exclude}&units=${units}&lang=${lang}&appid=${appid}"
+
+# Create cache dir if one is not found
+[ -d "$cache_dir" ] || mkdir -p "$cache_dir"
+
+# Write output to file if one is not found
+[ ! -e "$data_path" ] && curl -s "$data_url" | jq . > "$data_path"
+
+function display_usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+  -c, --current         show the current weather information
+  -d, --description     show the current weather description
+  -H, --hourly N        show the N-hour forecast
+  -D, --daily N         show the N-day forecast
+  -f  --forecast N      show the N-day forecast
+  -W  --dow N           show the names of the days of the week
+  -a  --alert           show national weather alerts
+  -e  --extract OBJECT  extract the value of OBJECT
+  -t  --time            show the time when the data was last fetched
+  -w, --write           write output to JSON file
+  -h, --help            show this help and exit
+
+EOF
+}
+
+function is_zero_rain() {
+    if [ "$1" -eq "0" ]; then
+	echo "none"; else
+	echo "$1mm"
+    fi
+}
+
+# http://snowfence.umn.edu/Components/winddirectionanddegrees.htm
+function get_wind_direction() {
+    local deg=$1
+
+    if [[ "$deg" -ge 348 ]] || [[ "$deg" -le 11 ]];  then
+	echo "N"
+    elif [[ "$deg" -gt 11 ]] && [[ "$deg" -lt 78 ]];  then
+	echo "NE"
+    elif [[ "$deg" -ge 78 ]] && [[ "$deg" -lt 101 ]]; then
+	echo "E"
+    elif [[ "$deg" -ge 101 ]] && [[ "$deg" -lt 168 ]]; then
+	echo "SE"
+    elif [[ "$deg" -ge 168 ]] && [[ "$deg" -lt 191 ]]; then
+	echo "S"
+    elif [[ "$deg" -ge 191 ]] && [[ "$deg" -lt 258 ]]; then
+	echo "SW"
+    elif [[ "$deg" -ge 258 ]] && [[ "$deg" -lt 281 ]]; then
+	echo "W"
+    elif [[ "$deg" -ge 281 ]] && [[ "$deg" -lt 348 ]]; then
+	echo "NW"
+    else
+	echo ""
+    fi
+}
+
+declare p
+
+function display_current_weather() {
+    current=$(jq -r '.current |
+[.feels_like, .humidity, .wind_speed, .wind_deg, .clouds, .uvi, .sunrise, .sunset ] | @csv' "$data_path")
+    daily=$(jq -r '.daily[0] | [.temp.max, .temp.min, .rain, .pop, .uvi ] | @csv' "$data_path")
+    min=$(echo "$daily" | cut -d ',' -f1 | xargs printf "%.*f\n" "$p")
+    max=$(echo "$daily" | cut -d ',' -f2 | xargs printf "%.*f\n" "$p")
+    rain=$(echo "$daily" | cut -d ',' -f3 | xargs printf "%.*f\n" "$p")
+    rain=$(is_zero_rain "$rain")
+    pop=$(echo "$daily" | cut -d ',' -f4 | xargs printf "%.*f\n" "$p")
+    feels_like=$(echo "$current" | cut -d ',' -f1 | xargs printf "%.*f\n" "$p")
+    hum=$(echo "$current" | cut -d ',' -f2 | xargs printf "%.*f\n" "$p")
+    wind=$(echo "$current" | cut -d ',' -f3)
+    local speed_unit="km/h"
+
+    # Convert wind speed from m/s to km/s
+    [ "$units" = "metric" ] && \
+	wind=$(awk "BEGIN {print $wind*3.6}" | xargs printf "%.01f\n")
+    [ "$units" = "imperial" ] && \
+	local speed_unit="mi/h"
+
+    wind=$(echo "$wind" | xargs printf "%.01f\n")
+    wind_dir=$(get_wind_direction "$(echo "$current" | cut -d ',' -f4)")
+    clouds=$(echo "$daily" | cut -d ',' -f5 | xargs printf "%.*f\n" "$p")
+    uvi=$(echo "$current" | cut -d ',' -f6 | xargs printf "%.*f\n" "$p")
+    uvi_max=$(echo "$daily" | cut -d ',' -f5 | xargs printf "%.*f\n" "$p")
+    sunrise=$(echo "$current" | cut -d ',' -f7)
+    sunset=$(echo "$current" | cut -d ',' -f8)
+
+    echo "Temp: $min/$max, Now: $feels_like | Humidity: ${hum}%"
+    echo "Wind: ${wind}${speed_unit} $wind_dir | Clouds: ${clouds}%"
+    echo "Rain: ${rain} | Chance: ${pop}%"
+    echo "UV index: $uvi | UV max: $uvi_max"
+    echo "Sunrise: $(date -d "@${sunrise}" +"%R") | Sunset: $(date -d "@${sunset}" +"%R")"
+}
+
+function display_hourly_forecast() {
+    local fields='.hourly[] |
+"\(.dt), \(.temp), \(.feels_like). \(.pop), \(.uvi), \(.weather[].description),"'
+    result=$(jq -r "$fields" "$data_path")
+
+    # https://unix.stackexchange.com/questions/168315/how-can-i-convert-timestamps-in-a-column-to-a-date
+    echo "$result" | awk -F, '{OFS=","; ("date +%R -d @"$1) | getline $1}1' | \
+	awk '{printf "%s %0.f/%0.f, %d%%, %d, %s %s %s\n",$1,$2,$3,$4,$5,substr(toupper($6), 1,1) substr($6, 2),$7,$8}' | \
+	# Trim whitespace
+	awk '{$1=$1};1' | \
+
+	# Add header with: weather -H | head -1, and non-header with:
+	# weather -H | tail -n +2
+	sed '1i Time, Temp, PoP, UV, Description' | \
+	    column -t -s ',' | head -n $(("$1" + 1))
+}
+
+function display_daily_forecast() {
+    local fields='.daily[] |
+"\(.dt), \(.temp.max), \(.temp.min), \(.rain), \(.pop), \(.weather[].description),"'
+    result=$(jq -r "$fields" "$data_path")
+
+    echo "$result" | awk -F, '{OFS=","; ("date +%a\ %-1d -d @"$1) | getline $1}1' | \
+	awk '{printf "%s %s %0.f/%0.f, %dmm, %d%%, %s %s %s\n",$1,$2,$3,$4,$5,$6,substr(toupper($7), 1,1) substr($7, 2),$8,$9}' | \
+	sed '1i Date, Hi/Low, Rain, PoP, Description' | \
+	awk '{$1=$1};1' | \
+        column -t -s ',' | head -n $(("$1" + 1))
+}
+
+function display_temp_forecast() {
+    max=$(jq -r '.daily[] | "\(.temp.max)"' "$data_path" | head -n "$1")
+    min=$(jq -r '.daily[] | "\(.temp.min)"' "$data_path"  | head -n "$1")
+    local hspace="$2"
+
+    for i in $max; do
+	printf "%.0f\n" "$i" | xargs printf "  %-${hspace}s";
+    done; echo ""
+
+    for i in $min; do
+	printf "%.0f\n" "$i" | xargs printf "  %-${hspace}s";
+    done; echo ""
+}
+
+function copy_icons() {
+    icon=$(jq -r .current.weather[].icon "$data_path")
+    icons=$(jq -r '.daily[] | [.weather[].icon ] | @sh' "$data_path")
+
+    arr=( $(echo "$icons") )
+
+    for ((i = 0; i < ${#arr[@]}; ++i)); do
+	n=$(( "$i" + 1 ))
+	n=$(echo $n | awk '{printf "%02d",$1}')
+	name=$(echo "${arr[$i]}" | tr -d \')
+	cp -f ~/.conky/weather/icons/"$name".png "$cache_dir"/"$n".png
+	cp -f ~/.conky/weather/icons/"$icon".png "$cache_dir"/current.png
+    done
+}
+
+function check_dep () {
+    for dep in "$@"; do
+	command -v "$dep" 1>/dev/null || \
+	    { printf "%s not found. Please install it.\n" "$dep" ; exit 2; }
+    done
+}
+
+function relative() {
+    local day=$((24*60*60))
+    local hour=$((60*60))
+    local min=$((60))
+
+    start=$(date --date "$1" +%s)
+    end=$(date +%s)
+    local delta=$((end-start))
+
+    if (( delta < hour)); then
+       	echo $((delta/"$min"))"m ago"; else
+	if (( delta < day )); then
+	    echo $((delta/"$hour"))"h ago"; else
+	    echo $((delta/"$day"))"d ago"
+	fi
+    fi
+}
+
+if [ $# -eq 0 ]; then
+    temp=$(jq -r .current.temp "$data_path" | xargs printf "%.*f\n" "$p")
+    echo "$temp°"
+else
+    while [ ! $# -eq 0 ]; do
+	case "$1" in
+	    --current | -c)
+		display_current_weather | column -t -s '|'
+		;;
+	    --description | -d)
+		# Use "-d main" for the short version
+		echo $(jq -r .current.weather[]."${2:-description}" "$data_path" | sed 's/^./\u&/g')
+		;;
+	    --hourly | -H)
+		# Use 4 if 2nd arg is not set
+		display_hourly_forecast "${2:-4}"
+		;;
+	    --daily | -D)
+		display_daily_forecast "${2:-4}"
+		;;
+	    --forecast | -f)
+		display_temp_forecast "${2:-5}" "${3:-8}"
+		;;
+	    --dow | -W)
+		# To start tomorrow: weather -W 6 | cut -c10
+		daily=$(jq -r '.daily[] | [.dt ] | @csv' "$data_path")
+		echo "$daily" | awk -F, '{OFS=","; ("date +%a -d @"$1) | getline $1}1' | \
+		    head -n "${2:-5}" | xargs printf "%-${3:-9}s"; echo ""
+		;;
+	    --alert | -a)
+		if jq -e 'has("alerts")' "$data_path" > /dev/null; then
+		    jq -r .alerts[].description "$data_path" | fmt
+		fi
+		;;
+	    --extract | -e)
+		jq -r "$2" "$data_path"
+		;;
+	    --time | -t)
+		date=$(date -r "$data_path" "+%F %R")
+		if [ $# -eq 1 ]; then
+		    echo "$date"; else
+		    relative "$date"
+		fi
+		;;
+	    --write | -w)
+		check_dep "curl" "jq" && curl -s "$data_url" | jq . > "$data_path" && copy_icons
+		;;
+	    --help | -h)
+		display_usage
+		exit
+		;;
+	esac
+	shift
+    done
+fi
