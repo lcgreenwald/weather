@@ -4,7 +4,7 @@
 This is a general-purpose command line tool to create and configure
 weather widgets in [[https://github.com/brndnmtthws/conky][conky]] using data from the [[https://openweathermap.org/][openweathermap]] ([[https://openweathermap.org/api/one-call-api][onecall]])
 API.
-
+Copyright (C) 2021 Jonathan Gregory <jgrg at autistici dot org>
 Misc fixes and cleanup by Larry Greenwald, WB0SIO.
 
 * Dependencies
