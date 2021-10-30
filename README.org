@@ -14,7 +14,7 @@ Misc fixes and cleanup by Larry Greenwald, WB0SIO.
 * Installation
 
 #+begin_example
-$ git clone https://gitlab.com/WB0SIO/weather.git ~/.conky/weather
+$ git clone https://github.com/lcgreenwald/weather.git ~/.conky/weather
 $ cd ~/.conky/weather
 $ sudo make install
 #+end_example
